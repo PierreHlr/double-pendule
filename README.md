@@ -105,7 +105,7 @@ x_1 = L_1\sin\theta_1,\qquad y_1 = L_1\cos\theta_1,\qquad x_2 = x_1 + L_2\sin\th
 L'énergie cinétique $T$ et l'énergie potentielle de pesanteur $V$ (nulle à la hauteur du pivot) valent :
 
 ```math
-T = \tfrac12 (m_1+m_2)\,L_1^2\,\dot\theta_1^2 + \tfrac12\, m_2 L_2^2\,\dot\theta_2^2 + m_2 L_1 L_2\,\dot\theta_1\dot\theta_2\cos(\theta_1-\theta_2)
+T = \frac12 (m_1+m_2)\,L_1^2\,\dot\theta_1^2 + \frac12\, m_2 L_2^2\,\dot\theta_2^2 + m_2 L_1 L_2\,\dot\theta_1\dot\theta_2\cos(\theta_1-\theta_2)
 ```
 
 ```math
@@ -129,7 +129,7 @@ Le dénominateur ne s'annule jamais, car $D = 2(m_1 + m_2\sin^2\Delta) \geq 2m_1
 L'état du système est $y = (\theta_1, \omega_1, \theta_2, \omega_2)$, avec $\omega_i = \dot\theta_i$ ; les équations précédentes s'écrivent $\dot y = f(y)$. Chaque pas de durée $h$ combine quatre évaluations de la dérivée :
 
 ```math
-k_1 = f(y_n),\quad k_2 = f\big(y_n + \tfrac h2 k_1\big),\quad k_3 = f\big(y_n + \tfrac h2 k_2\big),\quad k_4 = f(y_n + h k_3),\qquad y_{n+1} = y_n + \tfrac h6\,(k_1 + 2k_2 + 2k_3 + k_4)
+k_1 = f(y_n),\quad k_2 = f\big(y_n + \frac h2 k_1\big),\quad k_3 = f\big(y_n + \frac h2 k_2\big),\quad k_4 = f(y_n + h k_3),\qquad y_{n+1} = y_n + \frac h6\,(k_1 + 2k_2 + 2k_3 + k_4)
 ```
 
 L'erreur commise sur une durée fixe décroît comme $h^4$ : diviser le pas par deux la rend seize fois plus petite. L'animation utilise $h = 5$ ms. Le temps réel écoulé (multiplié par `playback_speed`) est accumulé, puis consommé par pas fixes : le calcul ne dépend donc pas de la fréquence d'affichage. La traînée conserve les 220 dernières positions de la seconde masse.
@@ -151,13 +151,13 @@ Avec $\delta_0 = 0{,}5° \approx 8{,}7\cdot10^{-3}$ rad et $\lambda$ de l'ordre 
 L'exposant de Lyapunov $\lambda$ mesure ce taux d'écartement :
 
 ```math
-\lambda = \lim_{t\to\infty}\,\lim_{\delta_0\to 0}\;\frac1t\,\ln\frac{\lVert\delta(t)\rVert}{\lVert\delta_0\rVert}
+\lambda = \lim_{t\to\infty}\,\lim_{\delta_0\to 0}\;\frac1t\,\ln\frac{\|\delta(t)\|}{\|\delta_0\|}
 ```
 
 Pour mesurer un écart dans l'espace des états, il faut comparer des angles (en radians) à des vitesses angulaires (en rad/s). Les vitesses sont donc divisées par une pulsation propre $\Omega$ du système :
 
 ```math
-\lVert\delta\rVert = \sqrt{\delta\theta_1^2 + \delta\theta_2^2 + \frac{\delta\omega_1^2 + \delta\omega_2^2}{\Omega^2}},\qquad \Omega = \sqrt{\frac{g}{(L_1+L_2)/2}}
+\|\delta\| = \sqrt{\delta\theta_1^2 + \delta\theta_2^2 + \frac{\delta\omega_1^2 + \delta\omega_2^2}{\Omega^2}},\qquad \Omega = \sqrt{\frac{g}{(L_1+L_2)/2}}
 ```
 
 Le calcul suit la **méthode de Benettin**, pour chaque case de la carte :
@@ -181,17 +181,19 @@ Sur la carte, la zone sombre centrale correspond aux faibles angles, donc aux fa
 Un mouvement est périodique de période $P$ si l'état complet se répète : $y(t + P) = y(t)$. Les pendules partent au repos, depuis $(\theta_1^0, \theta_2^0)$. Un mouvement périodique finit donc par repasser par ces mêmes angles, avec des vitesses nulles. On suit pour cela l'écart relatif à l'état de départ :
 
 ```math
-r(t) = \sqrt{\frac{\operatorname{wrap}\big(\theta_1(t)-\theta_1^0\big)^2 + \operatorname{wrap}\big(\theta_2(t)-\theta_2^0\big)^2 + \big(\omega_1(t)^2+\omega_2(t)^2\big)/\Omega^2}{\operatorname{wrap}(\theta_1^0)^2 + \operatorname{wrap}(\theta_2^0)^2}}
+r(t) = \sqrt{\frac{\mathrm{wrap}\big(\theta_1(t)-\theta_1^0\big)^2 + \mathrm{wrap}\big(\theta_2(t)-\theta_2^0\big)^2 + \big(\omega_1(t)^2+\omega_2(t)^2\big)/\Omega^2}{\mathrm{wrap}(\theta_1^0)^2 + \mathrm{wrap}(\theta_2^0)^2}}
 ```
 
-- $\operatorname{wrap}$ ramène un angle dans $[-\pi, \pi[$ : un pendule qui a fait un tour complet est bien revenu à la même position.
+- $\mathrm{wrap}$ ramène un angle dans $[-\pi, \pi[$ : un pendule qui a fait un tour complet est bien revenu à la même position.
 - Le dénominateur est la distance entre l'état de départ et l'équilibre. Il rend l'écart relatif, et donc comparable entre petites et grandes amplitudes.
 - Le score d'une case est le plus petit $r$ atteint pendant $T = 15$ s, compté uniquement après que le pendule s'est éloigné de son départ ($r > 0{,}5$ au moins une fois). L'instant $t^\star$ de ce meilleur retour estime la période, ou un de ses multiples.
 - Le minimum tombe en général entre deux pas de calcul. On le situe précisément grâce à une parabole passant par les trois derniers échantillons $a$, $b$, $c$ de $r^2$ (avec $b$ le plus petit). Près d'un passage rapproché, $r^2$ est presque exactement quadratique, et le minimum vaut :
 
 ```math
-r^2_{\min} = b - \frac{(c-a)^2}{8\,(a - 2b + c)},\qquad \text{atteint à } \frac{a-c}{2\,(a-2b+c)} \text{ pas du point central}
+r^2_{\min} = b - \frac{(c-a)^2}{8\,(a - 2b + c)}
 ```
+
+Ce minimum est atteint à $\frac{a-c}{2(a-2b+c)}$ pas du point central.
 
 Un mouvement périodique donne $r = 0$. Un mouvement quasi périodique, qui combine deux fréquences sans rapport rationnel, revient seulement « presque » à son départ : $r$ est petit, mais d'autant plus petit que la durée observée est longue. Un mouvement chaotique ne revient pas près de son départ, et $r$ reste grand. Quand aucun retour n'a lieu, la case est notée « aucun retour proche ».
 
