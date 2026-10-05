@@ -1,27 +1,25 @@
-"""Palette et conventions d'affichage de l'application."""
+"""Palette et conventions d'affichage de l'application.
 
-BACKGROUND = "#070b18"
-STAGE_GLOW = "#111b36"
-SURFACE = "#0c1326"
-SURFACE_RAISED = "#141d36"
-KEY_EDGE = "#04070f"
-BORDER = "#1b2542"
-BORDER_STRONG = "#2a3659"
+Reprend la direction artistique du portfolio (pierrehlr.github.io) : papier
+crème, encre, quatre couleurs mates, titres à chasse fixe en majuscules,
+filets d'encre et angles droits, sans dégradé, ombre ni halo.
+"""
 
-GRID = "#121b33"
-GRID_STRONG = "#1c2744"
-TICK = "#2e3a5c"
-SUPPORT = "#3d4a6d"
-ROD_SHADOW = "#1c2540"
+# Papier et encre
+BACKGROUND = "#ebe6dc"  # papier crème
+PAPER = "#f3efe7"  # cartes et cadres, un ton plus clair
+PAPER_DARK = "#e2dccf"  # champs modifiables, cellules pas encore calculées
+INK = "#1b1b1b"  # texte, filets, cadres, tiges
+MUTED = "#4d4a45"
+HELPER = "#6b665e"
+LINE_SOFT = "#cfc8ba"  # séparateurs discrets, graduations fines
 
-TEXT = "#eef1f8"
-MUTED = "#8c96b0"
-FAINT = "#56617f"
-
-ACCENT = "#8ab4ff"
-GREEN = "#83c167"
-AMBER = "#f9c74f"
-RED = "#ff6b6b"
+# Les quatre couleurs de la bande du portfolio
+SAGE = "#849586"
+TERRACOTTA = "#d6743f"
+BRICK = "#ab2317"
+SLATE = "#44738c"
+BAND = (SAGE, TERRACOTTA, BRICK, SLATE)
 
 TITLE = "Double pendule"
 TITLE_PLURAL = "Doubles pendules"

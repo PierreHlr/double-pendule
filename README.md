@@ -43,7 +43,7 @@ Seuls les angles se changent dans l'interface : longueurs, masses, gravité, amo
 
 Les onglets en haut de la scène, ou les touches `1`, `2` et `3` (ou `&`, `é`, `"` sur un clavier AZERTY, ainsi que le pavé numérique), changent de vue.
 
-- **Pendules** : rapporteur gradué centré sur le pivot (0° correspond à la verticale descendante), traînées qui s'estompent avec le temps, masses lumineuses.
+- **Pendules** : rapporteur gradué centré sur le pivot (0° correspond à la verticale descendante), traînées qui s'estompent avec le temps, masses cerclées d'encre.
 - **Divergence** : pour chaque couple (θ₁, θ₂) de départ, l'exposant de Lyapunov λ mesure la vitesse à laquelle deux pendules presque identiques s'écartent : leur écart croît comme $e^{\lambda t}$. Sombre : mouvement régulier ; clair : chaotique ([détails](#4-carte-de-divergence--exposant-de-lyapunov)).
 - **Périodicité** : pour chaque couple de départ, plus petit écart entre l'état initial et un état ultérieur (angles modulo 360° et vitesses), rapporté à la distance entre l'état initial et l'équilibre. Un mouvement parfaitement périodique repasse exactement par son départ. Clair : presque périodique. Les minima les plus marqués sont affinés par recherche locale, puis proposés dans une liste avec leur période ([détails](#5-carte-de-périodicité--retour-vers-létat-initial)).
 
@@ -59,10 +59,12 @@ Les cartes sont calculées en quelques secondes sur plusieurs processus, avec Nu
 ## Interface
 
 - **En-tête** : titre, voyant réglage/lecture/pause et chronomètre de la simulation. Une notification brève y confirme certaines actions.
-- **Panneau de configuration** : une carte par double pendule, avec les couleurs de ses deux masses, ses angles initiaux et ses longueurs. Les cartes passent en format compact lorsqu'il y a beaucoup de pendules.
+- **Panneau de configuration** : une carte par double pendule, avec un bandeau aux couleurs de ses deux masses, ses angles initiaux et ses longueurs. Les cartes passent en format compact lorsqu'il y a beaucoup de pendules.
 - **Barre des touches** : rappel des raccourcis du mode en cours ; les bascules actives (traînées, plein écran) sont colorées.
 
-L'affichage reste net sur les écrans haute résolution et la barre de titre adopte le thème sombre sous Windows 11. Tk ne lissant pas les formes du canvas, les éléments ronds (masses, coins arrondis, voyants, repères, icône) sont calculés pixel par pixel et encodés en PNG par [`canvas_graphics.py`](canvas_graphics.py). Les couleurs et le formatage des nombres sont regroupés dans [`theme.py`](theme.py).
+Le style reprend celui de mon [portfolio](https://pierrehlr.github.io) : papier crème, encre, quatre couleurs mates (sauge, terracotta, rouge brique, ardoise), titres à chasse fixe en majuscules, filets d'encre et angles droits. Les polices JetBrains Mono et Inter Tight sont utilisées si elles sont installées ; sinon, Cascadia Mono et Segoe UI les remplacent.
+
+L'affichage reste net sur les écrans haute résolution et la barre de titre prend la couleur du papier sous Windows 11. Tk ne lissant pas les formes du canvas, les éléments ronds (masses, axe, repères, icône) sont calculés pixel par pixel et encodés en PNG par [`canvas_graphics.py`](canvas_graphics.py). Les couleurs et le formatage des nombres sont regroupés dans [`theme.py`](theme.py).
 
 ## Configuration dans le code
 

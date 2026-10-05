@@ -1,9 +1,10 @@
 """Vues « carte de chaleur » de l'application : divergence et périodicité.
 
 L'axe horizontal porte θ₁ initial, l'axe vertical θ₂ initial, de −180° à 180°.
-Chaque carte utilise une rampe à une seule teinte, du plus sombre (valeur
-faible, proche du fond) au plus clair : orange pour la divergence, bleu pour
-la périodicité. Un clic applique le couple d'angles au pendule sélectionné.
+Chaque carte utilise une rampe qui va de l'encre (valeur faible) au papier
+(valeur forte) en passant par une couleur du portfolio : terracotta pour la
+divergence, ardoise pour la périodicité. Un clic applique le couple d'angles
+au pendule sélectionné.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 import theme
-from canvas_graphics import blend, capsule_png, draw_rounded_rect, hex_to_rgb, marker_png, tracked
+from canvas_graphics import blend, draw_box, hex_to_rgb, marker_png
 from chaos_maps import DIVERGENCE, PERIODICITY, Candidate, MapJob
 from double_pendulum import wrap_degrees
 from simulation_config import SETTINGS
@@ -47,49 +48,71 @@ TEXTS = {
 # --------------------------------------------------------------------------
 # Couleurs
 
+# Passage sRGB linéaire ↔ OKLab (Björn Ottosson, 2020).
+SRGB_TO_LMS = np.array(
+    [
+        [0.4122214708, 0.5363325363, 0.0514459929],
+        [0.2119034982, 0.6806995451, 0.1073969566],
+        [0.0883024619, 0.2817188376, 0.6299787005],
+    ]
+)
+LMS_TO_OKLAB = np.array(
+    [
+        [0.2104542553, 0.7936177850, -0.0040720468],
+        [1.9779984951, -2.4285922050, 0.4505937099],
+        [0.0259040371, 0.7827717662, -0.8086757660],
+    ]
+)
+OKLAB_TO_LMS = np.array(
+    [
+        [1.0, 0.3963377774, 0.2158037573],
+        [1.0, -0.1055613458, -0.0638541728],
+        [1.0, -0.0894841775, -1.2914855480],
+    ]
+)
+LMS_TO_SRGB = np.array(
+    [
+        [4.0767416621, -3.3077115913, 0.2309699292],
+        [-1.2684380046, 2.6097574011, -0.3413193965],
+        [-0.0041960863, -0.7034186147, 1.7076147010],
+    ]
+)
 
-def _oklch_to_linear_rgb(lightness: float, chroma: float, hue: float) -> np.ndarray:
-    a = chroma * math.cos(math.radians(hue))
-    b = chroma * math.sin(math.radians(hue))
-    l_ = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3
-    m_ = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3
-    s_ = (lightness - 0.0894841775 * a - 1.2914855480 * b) ** 3
-    return np.array(
-        [
-            4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_,
-            -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
-            -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_,
-        ]
-    )
+
+def _to_oklab(color: str) -> np.ndarray:
+    rgb = np.array(hex_to_rgb(color)) / 255
+    linear = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    return LMS_TO_OKLAB @ np.cbrt(SRGB_TO_LMS @ linear)
 
 
-def sequential_ramp(hue: float, chroma: float, steps: int = 256) -> np.ndarray:
-    """Rampe à teinte unique, clarté OKLCH croissante (sombre → clair).
+def _from_oklab(lab: np.ndarray) -> np.ndarray:
+    """Couleurs OKLab (tableau n × 3) converties en sRGB 8 bits."""
 
-    La saturation culmine au milieu et s'annule aux extrémités ; elle est
-    réduite là où la couleur sortirait de l'espace sRGB.
+    linear = np.clip(((lab @ OKLAB_TO_LMS.T) ** 3) @ LMS_TO_SRGB.T, 0, 1)
+    rgb = np.where(linear <= 0.0031308, 12.92 * linear, 1.055 * linear ** (1 / 2.4) - 0.055)
+    return np.round(rgb * 255).astype(np.uint8)
+
+
+def sequential_ramp(dark: str, middle: str, light: str, steps: int = 256) -> np.ndarray:
+    """Rampe du sombre au clair passant par ``middle``, interpolée dans OKLab.
+
+    ``middle`` est placée selon sa clarté : la clarté perçue croît
+    régulièrement d'un bout à l'autre de la rampe.
     """
 
-    colors = np.empty((steps, 3))
-    for index, t in enumerate(np.linspace(0, 1, steps)):
-        lightness = 0.19 + 0.76 * t
-        target = chroma * math.sin(math.pi * (0.08 + 0.84 * t)) ** 1.2
-        linear = _oklch_to_linear_rgb(lightness, target, hue)
-        while (linear.min() < -1e-4 or linear.max() > 1 + 1e-4) and target > 1e-3:
-            target *= 0.95
-            linear = _oklch_to_linear_rgb(lightness, target, hue)
-        linear = np.clip(linear, 0, 1)
-        colors[index] = np.where(
-            linear <= 0.0031308, 12.92 * linear, 1.055 * linear ** (1 / 2.4) - 0.055
-        )
-    return np.round(colors * 255).astype(np.uint8)
+    start, center, end = (_to_oklab(color) for color in (dark, middle, light))
+    position = (center[0] - start[0]) / (end[0] - start[0])
+    t = np.linspace(0, 1, steps)[:, None]
+    lower = start + (center - start) * (t / position)
+    upper = center + (end - center) * ((t - position) / (1 - position))
+    return _from_oklab(np.where(t <= position, lower, upper))
 
 
 RAMPS = {
-    DIVERGENCE: sequential_ramp(hue=50, chroma=0.17),
-    PERIODICITY: sequential_ramp(hue=255, chroma=0.15),
+    DIVERGENCE: sequential_ramp(theme.INK, theme.TERRACOTTA, theme.PAPER),
+    PERIODICITY: sequential_ramp(theme.INK, theme.SLATE, theme.PAPER),
 }
-PENDING_RGB = np.array(hex_to_rgb(theme.SURFACE), dtype=np.uint8)
+PENDING_RGB = np.array(hex_to_rgb(theme.PAPER_DARK), dtype=np.uint8)
 
 
 def divergence_limit(values: np.ndarray) -> float:
@@ -196,6 +219,7 @@ class MapView:
         app = self.app
         canvas, px, fonts = app.canvas, app.px, app.fonts
         x1, y1, x2, y2 = app.layout.stage
+        line = app.layout.line
         self.job = app.request_map(self.kind)
         self._image_state = None
         self._hover = None
@@ -203,11 +227,11 @@ class MapView:
         title, description = TEXTS[self.kind]
         duration = format_value(SETTINGS.map_duration)
         canvas.create_text(
-            x1, y1, text=title, anchor="nw", fill=theme.TEXT, font=fonts["card_title"]
+            x1, y1, text=title.upper(), anchor="nw", fill=theme.INK, font=fonts["heading"]
         )
         text = canvas.create_text(
             x1,
-            y1 + fonts["card_title"].metrics("linespace") + px(2),
+            y1 + fonts["heading"].metrics("linespace") + px(2),
             text=description.format(duration=duration),
             anchor="nw",
             width=x2 - x1,
@@ -219,26 +243,28 @@ class MapView:
         panel_width = px(236)
         size = int(min(x2 - x1 - axis_band - panel_width - px(28), y2 - top - bottom_band))
         size = max(size, int(px(120)))
-        plot_x = x1 + axis_band
+        plot_x = round(x1 + axis_band)
+        top = round(top)
         self.plot = (plot_x, top, size)
         self.panel = (plot_x + size + px(28), top, x2, y2)
 
         self._image_item = canvas.create_image(plot_x, top, anchor="nw", tags="map_image")
-        line = max(1, round(px(1)))
-        canvas.create_rectangle(
-            plot_x - line, top - line, plot_x + size, top + size, outline=theme.BORDER_STRONG, width=line
-        )
+        # Cadre d'encre autour de la carte, comme les images du portfolio.
+        draw_box(canvas, plot_x - line, top - line, plot_x + size + line, top + size + line, None, theme.INK, line)
         axis_font = fonts["axis"]
+        tick = max(1, round(px(1)))
         for degrees in (-180, -90, 0, 90, 180):
             sx, sy = self._to_screen(degrees, degrees)
             label = format_value(degrees, "°")
-            canvas.create_line(sx, top + size, sx, top + size + px(5), fill=theme.TICK, width=line)
-            canvas.create_text(
-                sx, top + size + px(8), text=label, anchor="n", fill=theme.FAINT, font=axis_font
+            canvas.create_line(
+                sx, top + size + line, sx, top + size + px(6), fill=theme.HELPER, width=tick
             )
-            canvas.create_line(plot_x - px(5), sy, plot_x, sy, fill=theme.TICK, width=line)
             canvas.create_text(
-                plot_x - px(8), sy, text=label, anchor="e", fill=theme.FAINT, font=axis_font
+                sx, top + size + px(9), text=label, anchor="n", fill=theme.HELPER, font=axis_font
+            )
+            canvas.create_line(plot_x - px(6), sy, plot_x - line, sy, fill=theme.HELPER, width=tick)
+            canvas.create_text(
+                plot_x - px(9), sy, text=label, anchor="e", fill=theme.HELPER, font=axis_font
             )
         canvas.create_text(
             plot_x + size / 2,
@@ -249,7 +275,7 @@ class MapView:
             font=fonts["label"],
         )
         canvas.create_text(
-            x1 + px(2),
+            x1,
             top + size / 2,
             text="θ₂ initial",
             angle=90,
@@ -295,11 +321,11 @@ class MapView:
         if job is None:
             return
         if job.error:
-            message, color, fraction = f"Le calcul a échoué\n{job.error}", theme.RED, None
+            message, color, fraction = f"Le calcul a échoué\n{job.error}", theme.BRICK, None
         elif job.completed < job.total:
             message, color, fraction = (
                 f"Calcul de la carte… {round(job.progress * 100)} %",
-                theme.TEXT,
+                theme.INK,
                 job.progress,
             )
         else:
@@ -309,17 +335,15 @@ class MapView:
         width = max(font.measure(text) for text in lines) + px(32)
         height = len(lines) * font.metrics("linespace") + px(20) + (px(10) if fraction is not None else 0)
         left, top = x + size / 2 - width / 2, y + size / 2 - height / 2
-        draw_rounded_rect(
+        draw_box(
             canvas,
-            app.sprites,
             left,
             top,
             left + width,
             top + height,
-            px(10),
-            theme.SURFACE_RAISED,
-            theme.BORDER_STRONG,
-            max(1, round(px(1))),
+            theme.PAPER,
+            theme.INK,
+            app.layout.line,
             tags="map_progress",
         )
         canvas.create_text(
@@ -333,30 +357,37 @@ class MapView:
             tags="map_progress",
         )
         if fraction is not None:
-            bar_y = top + height - px(14)
+            bar_y = round(top + height - px(14))
             bar_x1, bar_x2 = left + px(16), left + width - px(16)
-            canvas.create_rectangle(
-                bar_x1, bar_y, bar_x2, bar_y + px(3), fill=theme.BORDER, outline="", tags="map_progress"
-            )
-            canvas.create_rectangle(
+            bar_height = round(px(4))
+            draw_box(canvas, bar_x1, bar_y, bar_x2, bar_y + bar_height, theme.LINE_SOFT, tags="map_progress")
+            draw_box(
+                canvas,
                 bar_x1,
                 bar_y,
                 bar_x1 + (bar_x2 - bar_x1) * fraction,
-                bar_y + px(3),
-                fill=theme.ACCENT,
-                outline="",
+                bar_y + bar_height,
+                theme.INK,
                 tags="map_progress",
             )
 
-    def _marker(self, radius: float, ring: str, badge: bool = False):
+    def _marker(self, radius: float, ring: str):
         px = self.app.px
-        if badge:
-            key = ("badge", round(radius, 2))
-            factory = lambda: marker_png(radius, theme.TEXT, px(1.5), theme.BACKGROUND, 0.78)
-        else:
-            key = ("marker", ring, round(radius, 2))
-            factory = lambda: marker_png(radius, ring, px(2.2), halo=theme.BACKGROUND, halo_width=px(1.6))
-        return self.app.sprites.photo(key, factory)
+        return self.app.sprites.photo(
+            ("marker", ring, round(radius, 2)),
+            lambda: marker_png(radius, ring, px(2.2), theme.PAPER, px(1.6)),
+        )
+
+    def _badge(self, sx: float, sy: float, number: int, tags: str | tuple[str, ...]) -> None:
+        """Numéro d'un mouvement presque périodique, dans un carré cadré d'encre."""
+
+        app = self.app
+        half = round(app.px(9))
+        left, top = round(sx) - half, round(sy) - half
+        draw_box(app.canvas, left, top, left + 2 * half, top + 2 * half, theme.PAPER, theme.INK, app.layout.line, tags=tags)
+        app.canvas.create_text(
+            left + half, top + half, text=str(number), fill=theme.INK, font=app.fonts["key"], tags=tags
+        )
 
     def draw_markers(self) -> None:
         """Couples choisis pour les pendules, et candidats périodiques."""
@@ -369,10 +400,7 @@ class MapView:
         # Seuls les candidats listés dans le panneau sont repérés sur la carte.
         for number, candidate in enumerate(self._candidates()[: self._listed], start=1):
             sx, sy = self._to_screen(candidate.theta1, candidate.theta2)
-            canvas.create_image(sx, sy, image=self._marker(px(9), theme.TEXT, badge=True), tags="map_markers")
-            canvas.create_text(
-                sx, sy, text=str(number), fill=theme.TEXT, font=fonts["key"], tags="map_markers"
-            )
+            self._badge(sx, sy, number, "map_markers")
 
         selected = app.definitions[app.selected]
         order = [i for i in range(len(app.definitions)) if i != app.selected] + [app.selected]
@@ -388,21 +416,18 @@ class MapView:
             )
             if not chosen:
                 continue
-            font = fonts["tag"]
-            width = round(font.measure(definition.name) + px(16))
+            font = fonts["mark"]
+            width = round(font.measure(definition.name) + px(12))
             height = round(font.metrics("linespace") + px(4))
-            back = app.sprites.photo(
-                ("capsule", width, height), lambda: capsule_png(width, height, theme.BACKGROUND, 0.72)
-            )
             x, _, size = self.plot
             side = -1 if sx + radius + px(6) + width > x + size else 1
             label_x = sx + side * (radius + px(4) + width / 2)
-            canvas.create_image(label_x, sy, image=back, tags="map_markers")
+            canvas.create_image(label_x, sy, image=app.veil(width, height, 0.85), tags="map_markers")
             canvas.create_text(
                 label_x,
                 sy,
                 text=definition.name,
-                fill=blend(definition.color2, theme.TEXT, 0.8),
+                fill=blend(definition.color2, theme.INK, 0.8),
                 font=font,
                 tags="map_markers",
             )
@@ -434,21 +459,20 @@ class MapView:
         tags = "map_panel"
 
         def overline(text: str, top: float) -> float:
-            canvas.create_text(
-                x1, top, text=tracked(text), anchor="nw", fill=theme.MUTED, font=fonts["overline"], tags=tags
-            )
-            return top + fonts["overline"].metrics("linespace") + px(8)
+            return app.overline(x1, top, x2, text, tags) + px(10)
 
-        # Légende : dégradé et graduations.
+        # Légende : dégradé cadré d'encre et graduations.
         y = overline("ÉCHELLE", y)
         ramp = RAMPS[self.kind]
         steps = 64
-        bar_height = px(10)
+        bar_height = round(px(10))
+        y = round(y)
         for step in range(steps):
             left = round(x1 + step * width / steps)
             right = round(x1 + (step + 1) * width / steps)
             color = "#%02x%02x%02x" % tuple(ramp[round(step / (steps - 1) * 255)])
             canvas.create_rectangle(left, y, right, y + bar_height, fill=color, outline="", tags=tags)
+        draw_box(canvas, x1, y, x2, y + bar_height, None, theme.INK, max(1, round(px(1))), tags=tags)
         if self.kind == DIVERGENCE:
             limit = self._limit
             ticks = ((0, "0"), (0.5, format_value(limit / 2)), (1, f"{format_value(limit)} s⁻¹"))
@@ -463,9 +487,9 @@ class MapView:
                 x1 + position * width, label_y, text=label, anchor=anchor, fill=theme.MUTED, font=fonts["axis"], tags=tags
             )
         y = label_y + fonts["axis"].metrics("linespace") + px(1)
-        canvas.create_text(x1, y, text=ends[0], anchor="nw", fill=theme.FAINT, font=fonts["axis"], tags=tags)
-        canvas.create_text(x2, y, text=ends[1], anchor="ne", fill=theme.FAINT, font=fonts["axis"], tags=tags)
-        y += fonts["axis"].metrics("linespace") + px(20)
+        canvas.create_text(x1, y, text=ends[0], anchor="nw", fill=theme.HELPER, font=fonts["small"], tags=tags)
+        canvas.create_text(x2, y, text=ends[1], anchor="ne", fill=theme.HELPER, font=fonts["small"], tags=tags)
+        y += fonts["small"].metrics("linespace") + px(22)
 
         # Valeur au couple du pendule sélectionné.
         definition = app.definitions[app.selected]
@@ -477,9 +501,9 @@ class MapView:
         reading = self._value_at(definition.theta1_degrees, definition.theta2_degrees)
         headline, detail = describe(self.kind, *reading) if reading else ("calcul en cours", "")
         for text, font, color in (
-            (headline, fonts["card_title"], theme.TEXT),
+            (headline, fonts["card_title"], theme.INK),
             (detail, fonts["label"], theme.MUTED),
-            (angles, fonts["label"], theme.FAINT),
+            (angles, fonts["label"], theme.HELPER),
         ):
             if not text:
                 continue
@@ -487,7 +511,7 @@ class MapView:
                 x1, y, text=text, anchor="nw", width=width, fill=color, font=font, tags=tags
             )
             y = canvas.bbox(item)[3] + px(2)
-        y += px(18)
+        y += px(20)
 
         if self.kind == DIVERGENCE:
             y = overline("INTERPRÉTATION", y)
@@ -506,15 +530,15 @@ class MapView:
                 canvas.create_text(
                     x1, y, text="Recherche en cours…", anchor="nw", fill=theme.MUTED, font=fonts["label"], tags=tags
                 )
-            row_height = fonts["label"].metrics("linespace") * 2 + px(6)
-            footer = fonts["axis"].metrics("linespace") * 2 + px(12)
+            row_height = fonts["label"].metrics("linespace") * 2 + px(8)
+            footer = fonts["small"].metrics("linespace") * 2 + px(12)
             self._listed = 0
             for number, candidate in enumerate(candidates, start=1):
                 if y + row_height > y2 - footer:
                     break
                 self._draw_candidate(number, candidate, x1, y, x2, row_height)
                 self._listed = number
-                y += row_height + px(2)
+                y += row_height + px(4)
 
         canvas.create_text(
             x1,
@@ -522,8 +546,8 @@ class MapView:
             text="Clic : appliquer au pendule sélectionné\nDouble-clic : appliquer et lancer",
             anchor="sw",
             width=width,
-            fill=theme.FAINT,
-            font=fonts["axis"],
+            fill=theme.HELPER,
+            font=fonts["small"],
             tags=tags,
         )
 
@@ -533,13 +557,10 @@ class MapView:
         app = self.app
         canvas, px, fonts = app.canvas, app.px, app.fonts
         tags = ("map_panel", f"candidate:{number - 1}")
-        canvas.create_rectangle(x1, y, x2, y + height, fill=theme.BACKGROUND, outline="", tags=tags)
+        draw_box(canvas, x1, y, x2, y + height, theme.PAPER, tags=tags)
         center_y = y + height / 2
-        canvas.create_image(
-            x1 + px(10), center_y, image=self._marker(px(9), theme.TEXT, badge=True), tags=tags
-        )
-        canvas.create_text(x1 + px(10), center_y, text=str(number), fill=theme.TEXT, font=fonts["key"], tags=tags)
-        text_x = x1 + px(28)
+        self._badge(x1 + px(15), center_y, number, tags)
+        text_x = x1 + px(34)
         line = fonts["label"].metrics("linespace")
         canvas.create_text(
             text_x,
@@ -549,7 +570,7 @@ class MapView:
                 f"θ₂ {format_value(candidate.theta2, '°')}"
             ),
             anchor="w",
-            fill=theme.TEXT,
+            fill=theme.INK,
             font=fonts["label"],
             tags=tags,
         )
@@ -563,12 +584,12 @@ class MapView:
             tags=tags,
         )
         canvas.create_text(
-            x2,
+            x2 - px(10),
             center_y - line / 2 - px(1),
             text=format_percent(candidate.distance),
             anchor="e",
-            fill=theme.TEXT,
-            font=fonts["tag"],
+            fill=theme.INK,
+            font=fonts["mark"],
             tags=tags,
         )
 
@@ -587,40 +608,33 @@ class MapView:
         left = x + column * size / count
         top = y + (count - 1 - row) * size / count
         cell = size / count
-        canvas.create_rectangle(
-            round(left) - 1,
-            round(top) - 1,
-            round(left + cell) + 1,
-            round(top + cell) + 1,
-            outline=theme.TEXT,
-            width=max(1, round(px(1.5))),
-            tags="map_hover",
-        )
+        # Cadre d'encre doublé de papier : visible sur les zones sombres comme claires.
+        line = app.layout.line
+        draw_box(canvas, left - 2 * line, top - 2 * line, left + cell + 2 * line, top + cell + 2 * line, None, theme.PAPER, line, tags="map_hover")
+        draw_box(canvas, left - line, top - line, left + cell + line, top + cell + line, None, theme.INK, line, tags="map_hover")
         period = float(self.job.periods[row, column]) if self.job.periods is not None else None
         headline, detail = describe(self.kind, value, period)
         axis = self.job.axis
         angles = f"θ₁ {format_value(round(float(axis[column]), 2), '°')} · θ₂ {format_value(round(float(axis[row]), 2), '°')}"
-        lines = [(headline, fonts["tag"], theme.TEXT)]
+        lines = [(headline, fonts["tag"], theme.INK)]
         if detail:
             lines.append((detail, fonts["label"], theme.MUTED))
-        lines.append((angles, fonts["label"], theme.FAINT))
+        lines.append((angles, fonts["label"], theme.HELPER))
         width = max(font.measure(text) for text, font, _ in lines) + px(24)
         height = sum(font.metrics("linespace") for _, font, _ in lines) + px(16)
         tip_x = left + cell + px(12)
         if tip_x + width > app.layout.stage[2]:
             tip_x = left - px(12) - width
         tip_y = min(max(top - height / 2, app.layout.stage[1]), app.layout.stage[3] - height)
-        draw_rounded_rect(
+        draw_box(
             canvas,
-            app.sprites,
             tip_x,
             tip_y,
             tip_x + width,
             tip_y + height,
-            px(8),
-            theme.SURFACE_RAISED,
-            theme.BORDER_STRONG,
-            max(1, round(px(1))),
+            theme.PAPER,
+            theme.INK,
+            line,
             tags="map_hover",
         )
         text_y = tip_y + px(8)

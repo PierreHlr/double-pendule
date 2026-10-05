@@ -28,9 +28,10 @@ class PendulumDefinition:
     theta2_degrees: float = -10.0
     omega1_degrees: float = 0.0
     omega2_degrees: float = 0.0
-    color1: str = "#58c4dd"
-    color2: str = "#ff6b6b"
-    rod_color: str = "#d8dee9"
+    # Couleurs mates du portfolio : terracotta, rouge brique et encre.
+    color1: str = "#d6743f"
+    color2: str = "#ab2317"
+    rod_color: str = "#1b1b1b"
 
     def parameters(self) -> PendulumParameters:
         return PendulumParameters(
@@ -76,8 +77,8 @@ PENDULUMS = (
         length2=1.0,
         theta1_degrees=120.0,
         theta2_degrees=-10.0,
-        color1="#58c4dd",
-        color2="#ff6b6b",
+        color1="#d6743f",
+        color2="#ab2317",
     ),
     PendulumDefinition(
         name="Pendule B",
@@ -85,9 +86,9 @@ PENDULUMS = (
         length2=1.0,
         theta1_degrees=120.5,
         theta2_degrees=-10.0,
-        color1="#83c167",
-        color2="#f9c74f",
-        rod_color="#b8c1d1",
+        color1="#849586",
+        color2="#44738c",
+        rod_color="#4d4a45",
     ),
 )
 

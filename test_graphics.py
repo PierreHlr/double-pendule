@@ -2,7 +2,7 @@ import struct
 import unittest
 import zlib
 
-from canvas_graphics import blend, corner_png, encode_png, mass_png
+from canvas_graphics import blend, encode_png, mass_png, veil_png
 from theme import format_clock, format_value
 
 
@@ -44,18 +44,18 @@ class GraphicsTests(unittest.TestCase):
         pixels = bytes([255, 0, 0, 255, 0, 0, 255, 128])
         self.assertEqual(read_png(encode_png(2, 1, pixels)), (2, 1, pixels))
 
-    def test_corner_is_opaque_inside_and_transparent_outside(self):
-        width, height, pixels = read_png(corner_png(8, 1, "#101010", "#808080", "nw"))
-        self.assertEqual((width, height), (8, 8))
-        alpha = lambda x, y: pixels[(y * width + x) * 4 + 3]
-        self.assertEqual(alpha(0, 0), 0)
-        self.assertEqual(alpha(7, 7), 255)
+    def test_veil_has_uniform_opacity(self):
+        width, height, pixels = read_png(veil_png(3, 2, "#ebe6dc", 0.8))
+        self.assertEqual((width, height), (3, 2))
+        self.assertEqual(pixels, bytes([0xEB, 0xE6, 0xDC, 204]) * 6)
 
-    def test_mass_sprite_is_opaque_at_center(self):
-        width, height, pixels = read_png(mass_png("#58c4dd", 6, 15))
-        center = ((height // 2) * width + width // 2) * 4
-        self.assertEqual(pixels[center + 3], 255)
-        self.assertEqual(pixels[3], 0)
+    def test_mass_is_flat_with_ink_outline(self):
+        width, height, pixels = read_png(mass_png("#d6743f", 10, "#1b1b1b", 2))
+        pixel = lambda x, y: tuple(pixels[(y * width + x) * 4 : (y * width + x) * 4 + 4])
+        middle = height // 2
+        self.assertEqual(pixel(width // 2, middle), (0xD6, 0x74, 0x3F, 255))
+        self.assertEqual(pixel(width // 2 - 9, middle), (0x1B, 0x1B, 0x1B, 255))
+        self.assertEqual(pixel(0, 0)[3], 0)
 
 
 if __name__ == "__main__":

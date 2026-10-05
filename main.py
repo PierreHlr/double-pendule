@@ -27,15 +27,12 @@ from canvas_graphics import (
     SpriteCache,
     app_icon_png,
     blend,
-    capsule_png,
-    dot_png,
-    draw_rounded_rect,
+    draw_box,
     enable_high_dpi,
     hub_png,
     mass_png,
-    pulse_png,
     style_title_bar,
-    tracked,
+    veil_png,
 )
 from double_pendulum import DoublePendulum, wrap_degrees
 from simulation_config import PENDULUMS, SETTINGS, PendulumDefinition
@@ -51,9 +48,10 @@ except ModuleNotFoundError as error:  # NumPy absent : les cartes sont désactiv
     chaos_maps = MapView = None
 
 TRAIL_SEGMENTS = 24
-PULSE_FRAMES = 20
-PULSE_PERIOD = 1.6
+BLINK_PERIOD = 1.2
 TOAST_DURATION = 2.2
+TAB_HEIGHT = 32
+CARD_BAND = 6
 DRAG_STEP = 0.5
 FINE_STEP = 0.1
 COARSE_STEP = 10.0
@@ -126,7 +124,6 @@ class PendulumItems:
 
     trail: list[int]
     trail_shown: list[bool]
-    rod_shadows: tuple[int, int]
     rods: tuple[int, int]
     masses: tuple[int, int]
     label: int
@@ -140,11 +137,13 @@ class Layout:
     width: int
     height: int
     margin: float
-    header_height: float
+    line: int
+    title_top: float
     tabs_top: float
     sidebar: tuple[float, float, float, float]
     stage: tuple[float, float, float, float]
     command_top: float
+    band_top: float
     origin: tuple[float, float]
     reach: float
     scale: float
@@ -163,7 +162,7 @@ class DoublePendulumApp:
         self.root.minsize(round(self.px(960)), round(self.px(640)))
         self.root.configure(bg=theme.BACKGROUND)
         self._set_icon()
-        style_title_bar(self.root, theme.BACKGROUND, theme.MUTED, theme.BORDER)
+        style_title_bar(self.root, theme.BACKGROUND, theme.INK, theme.INK)
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
 
         self.canvas = tk.Canvas(
@@ -195,8 +194,8 @@ class DoublePendulumApp:
         self._trail_chunk = max(1, math.ceil(SETTINGS.trail_points / TRAIL_SEGMENTS))
         self._time_item: int | None = None
         self._clock_length = 0
-        self._pulse_item: int | None = None
-        self._pulse_index = -1
+        self._blink_item: int | None = None
+        self._blink_on = True
         self._toast: tuple[str, str, float] | None = None
         self._title_right = 0.0
         self._status_left = 0.0
@@ -222,6 +221,9 @@ class DoublePendulumApp:
         return value * self.ui
 
     def _create_fonts(self) -> dict[str, tkfont.Font]:
+        """Polices du portfolio (JetBrains Mono, Inter Tight) si elles sont
+        installées, sinon leurs équivalents livrés avec Windows."""
+
         available = set(tkfont.families(self.root))
 
         def pick(*candidates: tuple[str, str]) -> tuple[str, str]:
@@ -230,26 +232,38 @@ class DoublePendulumApp:
                     return family, weight
             return candidates[-1]
 
-        display = pick(
-            ("Segoe UI Variable Display Semib", "normal"),
-            ("Segoe UI Semibold", "normal"),
-            ("Helvetica", "bold"),
+        # Chasse fixe très grasse : titres en majuscules, touches, chronomètre.
+        mono_heavy = pick(
+            ("JetBrains Mono ExtraBold", "normal"),
+            ("JetBrains Mono", "bold"),
+            ("Cascadia Mono", "bold"),
+            ("Consolas", "bold"),
+            ("Courier", "bold"),
         )
-        text = pick(("Segoe UI Variable Text", "normal"), ("Segoe UI", "normal"), ("Helvetica", "normal"))
+        # Chasse fixe : graduations, petites mentions.
+        mono = pick(
+            ("JetBrains Mono", "normal"),
+            ("Cascadia Mono", "normal"),
+            ("Consolas", "normal"),
+            ("Courier", "normal"),
+        )
+        text = pick(
+            ("Inter Tight", "normal"),
+            ("Segoe UI Variable Text", "normal"),
+            ("Segoe UI", "normal"),
+            ("Helvetica", "normal"),
+        )
         strong = pick(
+            ("Inter Tight SemiBold", "normal"),
             ("Segoe UI Variable Text Semibold", "normal"),
             ("Segoe UI Semibold", "normal"),
             ("Helvetica", "bold"),
         )
-        small_strong = pick(
-            ("Segoe UI Variable Small Semibol", "normal"),
-            ("Segoe UI Semibold", "normal"),
+        heavy = pick(
+            ("Inter Tight ExtraBold", "normal"),
+            ("Inter Tight", "bold"),
+            ("Segoe UI", "bold"),
             ("Helvetica", "bold"),
-        )
-        mono_strong = pick(
-            ("Cascadia Mono SemiBold", "normal"),
-            ("Consolas", "bold"),
-            ("Courier", "bold"),
         )
 
         def font(choice: tuple[str, str], size: int) -> tkfont.Font:
@@ -257,20 +271,23 @@ class DoublePendulumApp:
             return tkfont.Font(root=self.root, family=family, size=size, weight=weight)
 
         return {
-            "title": font(display, 19),
+            "title": font(mono_heavy, 21),
+            "heading": font(mono_heavy, 12),
             "subtitle": font(text, 10),
-            "overline": font(small_strong, 8),
-            "card_title": font(strong, 11),
+            "overline": font(mono_heavy, 8),
+            "card_title": font(heavy, 11),
             "label": font(text, 9),
-            "value": font(display, 13),
+            "value": font(strong, 13),
             "compact": font(strong, 10),
-            "clock": font(mono_strong, 11),
-            "status": font(small_strong, 8),
-            "key": font(small_strong, 8),
+            "clock": font(mono_heavy, 11),
+            "status": font(mono_heavy, 9),
+            "key": font(mono_heavy, 8),
             "hint": font(text, 9),
+            "small": font(text, 8),
             "tag": font(strong, 9),
+            "mark": font(mono_heavy, 9),
             "tab": font(strong, 9),
-            "axis": font(text, 8),
+            "axis": font(mono, 8),
         }
 
     def _place_window(self, width: float, height: float) -> None:
@@ -288,12 +305,7 @@ class DoublePendulumApp:
             self.sprites.photo(
                 ("icon", size),
                 lambda size=size: app_icon_png(
-                    size,
-                    theme.SURFACE_RAISED,
-                    theme.AMBER,
-                    first.rod_color,
-                    first.color1,
-                    first.color2,
+                    size, theme.PAPER, theme.INK, first.color1, first.color2
                 ),
             )
             for size in (64, 32)
@@ -375,12 +387,12 @@ class DoublePendulumApp:
     def reset_action(self) -> None:
         if not self.setup:
             self.enter_setup()
-            self._show_toast("Réglage des angles de départ", theme.ACCENT)
+            self._show_toast("Réglage des angles de départ", theme.SLATE)
             return
         self.definitions = list(PENDULUMS)
         self._reset_models()
         self._after_angles_changed()
-        self._show_toast("Angles de simulation_config.py rétablis", theme.TEXT)
+        self._show_toast("Angles de simulation_config.py rétablis", theme.INK)
 
     def toggle_pause(self) -> None:
         self.paused = not self.paused
@@ -398,7 +410,7 @@ class DoublePendulumApp:
         self._draw_commands()
         self._show_toast(
             "Traînées affichées" if self.trails_visible else "Traînées masquées",
-            theme.TEXT,
+            theme.INK,
         )
 
     def toggle_fullscreen(self) -> None:
@@ -451,12 +463,12 @@ class DoublePendulumApp:
             self._show_toast(
                 f"{definition.name} : θ₁ {format_value(theta1, '°')} · "
                 f"θ₂ {format_value(theta2, '°')}",
-                theme.ACCENT,
+                theme.SLATE,
             )
 
     def nudge(self, event: tk.Event, which: int, direction: int) -> None:
         if not self.setup:
-            self._show_toast("R : revenir au réglage pour changer les angles", theme.TEXT)
+            self._show_toast("R : revenir au réglage pour changer les angles", theme.INK)
             return
         definition = self.definitions[self.selected]
         delta = direction * angle_step(event)
@@ -548,11 +560,15 @@ class DoublePendulumApp:
 
     def _animate_indicators(self, now: float) -> None:
         canvas = self.canvas
-        if self._pulse_item is not None:
-            index = int((now % PULSE_PERIOD) / PULSE_PERIOD * PULSE_FRAMES)
-            if index != self._pulse_index:
-                self._pulse_index = index
-                canvas.itemconfigure(self._pulse_item, image=self._pulse_frame(index))
+        if self._blink_item is not None:
+            # Voyant de lecture : clignotement franc, sans fondu.
+            on = now % BLINK_PERIOD < BLINK_PERIOD / 2
+            if on != self._blink_on:
+                self._blink_on = on
+                canvas.itemconfigure(
+                    self._blink_item,
+                    fill=theme.SAGE if on else blend(theme.SAGE, theme.BACKGROUND, 0.3),
+                )
         if self._toast is not None and now > self._toast[2]:
             self._toast = None
             canvas.delete("toast")
@@ -576,7 +592,7 @@ class DoublePendulumApp:
             return
         self._close_editor(commit=True)
         self.canvas.delete("all")
-        self._time_item = self._pulse_item = None
+        self._time_item = self._blink_item = None
         self._overlay_drawn = False
         self.items = []
         self.layout = self._compute_layout(width, height)
@@ -589,6 +605,7 @@ class DoublePendulumApp:
             self._draw_maps_unavailable()
         self._draw_header()
         self._draw_tabs()
+        self._draw_band()
         self._draw_sidebar()
         self._draw_status()
         self._draw_commands()
@@ -598,12 +615,18 @@ class DoublePendulumApp:
     def _compute_layout(self, width: int, height: int) -> Layout:
         px = self.px
         margin = px(28)
-        header_height = px(100)
-        command_top = height - px(20) - px(46)
+        title_top = px(24) + self._rule_width() + px(12)
+        tabs_top = px(110)
+        band_top = height - px(20) - px(6)
+        command_top = band_top - px(48)
         sidebar_width = px(300) if width >= px(1100) else px(262)
-        sidebar = (margin, header_height, margin + sidebar_width, command_top - px(20))
-        tabs_top = header_height - px(12)
-        stage = (sidebar[2] + px(28), tabs_top + px(34) + px(18), width - margin, command_top - px(8))
+        sidebar = (margin, tabs_top, margin + sidebar_width, command_top - px(20))
+        stage = (
+            sidebar[2] + px(32),
+            tabs_top + px(TAB_HEIGHT) + px(18),
+            width - margin,
+            command_top - px(8),
+        )
         origin = ((stage[0] + stage[2]) / 2, (stage[1] + stage[3]) / 2)
         reach = max(px(60), min(stage[2] - stage[0], stage[3] - stage[1]) / 2 - px(30))
         longest = max(item.length1 + item.length2 for item in PENDULUMS)
@@ -611,44 +634,46 @@ class DoublePendulumApp:
             width=width,
             height=height,
             margin=margin,
-            header_height=header_height,
+            line=max(1, round(px(1.5))),
+            title_top=title_top,
             tabs_top=tabs_top,
             sidebar=sidebar,
             stage=stage,
             command_top=command_top,
+            band_top=band_top,
             origin=origin,
             reach=reach,
             scale=reach / longest,
         )
 
+    def _rule_width(self) -> int:
+        """Épaisseur du filet court placé au-dessus des titres."""
+
+        return max(2, round(self.px(3)))
+
+    def _rule(self, x1: float, y1: float, x2: float, tags: str | tuple[str, ...] = ()) -> None:
+        """Filet d'encre horizontal, de l'épaisseur des cadres."""
+
+        draw_box(self.canvas, x1, y1, x2, round(y1) + self.layout.line, theme.INK, tags=tags)
+
     def _draw_stage(self) -> None:
-        """Halo de fond, rapporteur d'angles et support du pivot."""
+        """Rapporteur d'angles et support du pivot, en traits fins."""
 
         canvas, layout, px = self.canvas, self.layout, self.px
         ox, oy = layout.origin
         reach = layout.reach
-
-        glow_radius = reach * 1.6
-        steps = 40
-        for step in range(steps):
-            fraction = step / (steps - 1)
-            radius = glow_radius * (1 - fraction) + px(2)
-            color = blend(theme.STAGE_GLOW, theme.BACKGROUND, fraction**1.7)
-            canvas.create_oval(
-                ox - radius, oy - radius, ox + radius, oy + radius, fill=color, outline=""
-            )
 
         line = max(1, round(px(1)))
         lengths = {item.length1 for item in PENDULUMS}
         if len(lengths) == 1:
             inner = lengths.pop() * layout.scale
             canvas.create_oval(
-                ox - inner, oy - inner, ox + inner, oy + inner, outline=theme.GRID, width=line
+                ox - inner, oy - inner, ox + inner, oy + inner, outline=theme.LINE_SOFT, width=line
             )
         canvas.create_oval(
-            ox - reach, oy - reach, ox + reach, oy + reach, outline=theme.GRID_STRONG, width=line
+            ox - reach, oy - reach, ox + reach, oy + reach, outline=theme.LINE_SOFT, width=line
         )
-        canvas.create_line(ox, oy, ox, oy + reach, fill=theme.GRID_STRONG, width=line)
+        canvas.create_line(ox, oy, ox, oy + reach, fill=theme.LINE_SOFT, width=line)
 
         for degrees in range(0, 360, 5):
             angle = math.radians(degrees)
@@ -661,7 +686,7 @@ class DoublePendulumApp:
                 oy + dy * inner_radius,
                 ox + dx * outer_radius,
                 oy + dy * outer_radius,
-                fill=theme.TICK if major else theme.GRID_STRONG,
+                fill=theme.HELPER if major else theme.LINE_SOFT,
                 width=line,
             )
         axis_font = self.fonts["axis"]
@@ -677,13 +702,11 @@ class DoublePendulumApp:
                 ox + math.sin(angle) * distance,
                 oy + math.cos(angle) * distance,
                 text=label,
-                fill=theme.FAINT,
-                font=self.fonts["axis"],
+                fill=theme.HELPER,
+                font=axis_font,
             )
 
-        canvas.create_line(
-            ox - px(24), oy, ox + px(24), oy, fill=theme.SUPPORT, width=px(3), capstyle="round"
-        )
+        canvas.create_line(ox - px(24), oy, ox + px(24), oy, fill=theme.INK, width=round(px(3)))
 
     def _draw_maps_unavailable(self) -> None:
         x1, y1, x2, y2 = self.layout.stage
@@ -703,9 +726,18 @@ class DoublePendulumApp:
         return self.px(max(8, min(17, 8 + 4 * math.sqrt(mass))))
 
     def _mass_image(self, color: str, radius: float) -> tk.PhotoImage:
+        outline = self.px(1.5)
         return self.sprites.photo(
             ("mass", color, round(radius, 2)),
-            lambda: mass_png(color, radius, radius * 2.5),
+            lambda: mass_png(color, radius, theme.INK, outline),
+        )
+
+    def veil(self, width: int, height: int, opacity: float = 0.8) -> tk.PhotoImage:
+        """Fond translucide couleur papier, derrière une étiquette posée sur le dessin."""
+
+        return self.sprites.photo(
+            ("veil", width, height, opacity),
+            lambda: veil_png(width, height, theme.BACKGROUND, opacity),
         )
 
     def _create_pendulum_items(self) -> None:
@@ -731,14 +763,11 @@ class DoublePendulumApp:
             trails.append(segments)
 
         self.items = []
+        font = self.fonts["mark"]
         for definition, segments in zip(self.definitions, trails):
-            shadows = tuple(
-                canvas.create_line(0, 0, 0, 0, fill=theme.ROD_SHADOW, width=px(7), capstyle="round")
-                for _ in range(2)
-            )
             rods = tuple(
                 canvas.create_line(
-                    0, 0, 0, 0, fill=definition.rod_color, width=px(2.6), capstyle="round"
+                    0, 0, 0, 0, fill=definition.rod_color, width=px(2.5), capstyle="round"
                 )
                 for _ in range(2)
             )
@@ -748,18 +777,16 @@ class DoublePendulumApp:
                 canvas.create_image(0, 0, image=self._mass_image(definition.color1, radius1)),
                 canvas.create_image(0, 0, image=self._mass_image(definition.color2, radius2)),
             )
-            font = self.fonts["tag"]
             self.items.append(
                 PendulumItems(
                     trail=segments,
                     trail_shown=[False] * TRAIL_SEGMENTS,
-                    rod_shadows=shadows,
                     rods=rods,
                     masses=masses,
                     label=0,
                     label_back=0,
                     label_size=(
-                        font.measure(definition.name) + px(16),
+                        font.measure(definition.name) + px(12),
                         font.metrics("linespace") + px(4),
                     ),
                     mass_radii=(radius1, radius2),
@@ -769,40 +796,38 @@ class DoublePendulumApp:
         ox, oy = self.layout.origin
         hub = self.sprites.photo(
             ("hub", round(px(1), 3)),
-            lambda: hub_png(theme.AMBER, theme.BACKGROUND, px(6.5), px(2.6)),
+            lambda: hub_png(theme.INK, theme.BACKGROUND, px(6), px(2.4)),
         )
         canvas.create_image(ox, oy, image=hub)
 
         for definition, items in zip(self.definitions, self.items):
             width, height = (round(size) for size in items.label_size)
-            back = self.sprites.photo(
-                ("capsule", width, height),
-                lambda: capsule_png(width, height, theme.BACKGROUND, 0.62),
-            )
-            items.label_back = canvas.create_image(0, 0, image=back)
+            items.label_back = canvas.create_image(0, 0, image=self.veil(width, height))
             items.label = canvas.create_text(
                 0,
                 0,
                 text=definition.name,
-                fill=blend(definition.color2, theme.TEXT, 0.8),
-                font=self.fonts["tag"],
+                fill=blend(definition.color2, theme.INK, 0.8),
+                font=font,
             )
 
     def _draw_header(self) -> None:
         canvas, layout, px, fonts = self.canvas, self.layout, self.px, self.fonts
-        title = theme.TITLE if len(PENDULUMS) == 1 else theme.TITLE_PLURAL
-        top = px(24)
+        title = (theme.TITLE if len(PENDULUMS) == 1 else theme.TITLE_PLURAL).upper()
+        # Filet court et épais au-dessus du titre, comme les titres du portfolio.
+        top = round(px(24))
+        draw_box(canvas, layout.margin, top, layout.margin + px(72), top + self._rule_width(), theme.INK)
         canvas.create_text(
-            layout.margin,
-            top,
+            layout.margin - px(1),
+            layout.title_top,
             text=title,
             anchor="nw",
-            fill=theme.TEXT,
+            fill=theme.INK,
             font=fonts["title"],
         )
         canvas.create_text(
-            layout.margin + px(1),
-            top + fonts["title"].metrics("linespace") + px(1),
+            layout.margin,
+            layout.title_top + fonts["title"].metrics("linespace"),
             text=theme.SUBTITLE,
             anchor="nw",
             fill=theme.MUTED,
@@ -813,15 +838,14 @@ class DoublePendulumApp:
         )
 
     def _header_center(self) -> float:
-        return self.px(24) + self.fonts["title"].metrics("linespace") * 0.62
+        return self.layout.title_top + self.fonts["title"].metrics("linespace") / 2
 
     def _draw_tabs(self) -> None:
         """Sélecteur de vue en haut de la scène : Pendules, Divergence, Périodicité."""
 
         canvas, layout, px, fonts = self.canvas, self.layout, self.px, self.fonts
         font, key_font = fonts["tab"], fonts["axis"]
-        height = px(34)
-        inner = px(4)
+        height = px(TAB_HEIGHT)
         widths = [
             px(14) + key_font.measure(str(number)) + px(8) + font.measure(label) + px(14)
             for number, (_, label) in enumerate(VIEWS, start=1)
@@ -829,35 +853,27 @@ class DoublePendulumApp:
         x = layout.stage[0]
         top = layout.tabs_top
         center_y = top + height / 2
-        self._pill(x, center_y, sum(widths) + 2 * inner, height, "tabs")
-        x += inner
         for number, ((view, label), width) in enumerate(zip(VIEWS, widths), start=1):
+            # Onglet actif en négatif, comme le bouton principal du portfolio.
             active = view == self.view
             tags = ("tabs", f"tab:{view}")
-            if active:
-                draw_rounded_rect(
-                    canvas,
-                    self.sprites,
-                    x,
-                    top + inner,
-                    x + width,
-                    top + height - inner,
-                    (height - 2 * inner) / 2,
-                    theme.SURFACE_RAISED,
-                    theme.BORDER_STRONG,
-                    max(1, round(px(1))),
-                    tags=tags,
-                )
-            else:
-                canvas.create_rectangle(
-                    x, top + inner, x + width, top + height - inner, fill=theme.SURFACE, outline="", tags=tags
-                )
+            draw_box(
+                canvas,
+                x,
+                top,
+                x + width,
+                top + height,
+                theme.INK if active else theme.BACKGROUND,
+                theme.INK,
+                layout.line,
+                tags=tags,
+            )
             canvas.create_text(
                 x + px(14),
                 center_y,
                 text=str(number),
                 anchor="w",
-                fill=theme.MUTED if active else theme.FAINT,
+                fill=theme.LINE_SOFT if active else theme.HELPER,
                 font=key_font,
                 tags=tags,
             )
@@ -866,11 +882,23 @@ class DoublePendulumApp:
                 center_y,
                 text=label,
                 anchor="w",
-                fill=theme.TEXT if active else theme.MUTED,
+                fill=theme.PAPER if active else theme.INK,
                 font=font,
                 tags=tags,
             )
-            x += width
+            x += width - layout.line  # Deux onglets voisins partagent leur bordure.
+
+    def _draw_band(self) -> None:
+        """Bande des quatre couleurs en bas de la fenêtre, comme en pied du portfolio."""
+
+        layout = self.layout
+        left, right = layout.margin, layout.width - layout.margin
+        gap = (right - left) * 0.02
+        segment = (right - left - 3 * gap) / 4
+        top = round(layout.band_top)
+        for position, color in enumerate(theme.BAND):
+            x = left + position * (segment + gap)
+            draw_box(self.canvas, x, top, x + segment, top + round(self.px(6)), color)
 
     # ------------------------------------------------------------------
     # Panneau de configuration
@@ -879,15 +907,31 @@ class DoublePendulumApp:
         px, fonts = self.px, self.fonts
         title = fonts["card_title"].metrics("linespace")
         if compact:
-            return px(12) * 2 + title + px(6) + 2 * self._compact_line_height()
+            return px(CARD_BAND) + px(12) * 2 + title + px(6) + 2 * self._compact_line_height()
         row = fonts["label"].metrics("linespace") + px(4) + self._field_height()
-        return px(16) * 2 + title + px(24) + 2 * row + px(12)
+        return px(CARD_BAND) + px(16) * 2 + title + px(24) + 2 * row + px(12)
 
     def _field_height(self) -> float:
         return self.fonts["value"].metrics("linespace") + self.px(6)
 
     def _compact_line_height(self) -> float:
         return self.fonts["compact"].metrics("linespace") + self.px(8)
+
+    def overline(
+        self, x1: float, top: float, x2: float, text: str, tags: str | tuple[str, ...]
+    ) -> float:
+        """Titre de colonne : majuscules à chasse fixe soulignées d'un filet d'encre.
+
+        Renvoie l'ordonnée sous le filet.
+        """
+
+        font = self.fonts["overline"]
+        self.canvas.create_text(
+            x1, top, text=text, anchor="nw", fill=theme.INK, font=font, tags=tags
+        )
+        rule_top = round(top + font.metrics("linespace") + self.px(4))
+        self._rule(x1, rule_top, x2, tags)
+        return rule_top + self.layout.line
 
     def _draw_sidebar(self) -> None:
         if self.layout is None:
@@ -897,25 +941,29 @@ class DoublePendulumApp:
         self._field_boxes = {}
         x1, y1, x2, y2 = layout.sidebar
         tags = "sidebar"
+        # Titre de colonne aligné sur les onglets, filet compris.
+        center_y = y1 + px(TAB_HEIGHT) / 2
         canvas.create_text(
-            x1 + px(2),
-            y1,
-            text=tracked("CONFIGURATION"),
-            anchor="nw",
-            fill=theme.MUTED,
+            x1,
+            center_y,
+            text="CONFIGURATION",
+            anchor="w",
+            fill=theme.INK,
             font=fonts["overline"],
             tags=tags,
         )
         count = len(self.definitions)
         canvas.create_text(
-            x2 - px(2),
-            y1,
+            x2,
+            center_y,
             text=f"{count} pendule{'s' if count > 1 else ''}",
-            anchor="ne",
-            fill=theme.FAINT,
-            font=fonts["label"],
+            anchor="e",
+            fill=theme.HELPER,
+            font=fonts["axis"],
             tags=tags,
         )
+        rule_bottom = round(y1 + px(TAB_HEIGHT))
+        self._rule(x1, rule_bottom - layout.line, x2, tags)
         if self.setup:
             footer_text = (
                 "Glissez une masse ou utilisez les flèches (Maj : 0,1°, Ctrl : 10°). "
@@ -924,17 +972,17 @@ class DoublePendulumApp:
         else:
             footer_text = "Longueurs, masses et couleurs : simulation_config.py"
         footer = canvas.create_text(
-            x1 + px(2),
+            x1,
             y2,
             text=footer_text,
             anchor="sw",
-            width=x2 - x1 - px(4),
-            fill=theme.FAINT,
-            font=fonts["axis"],
+            width=x2 - x1,
+            fill=theme.HELPER,
+            font=fonts["small"],
             tags=tags,
         )
 
-        top = y1 + fonts["overline"].metrics("linespace") + px(12)
+        top = rule_bottom + px(16)
         bottom = canvas.bbox(footer)[1] - px(14)
         gap = px(12)
         available = bottom - top
@@ -956,11 +1004,11 @@ class DoublePendulumApp:
         if shown < count:
             hidden = count - shown
             canvas.create_text(
-                x1 + px(2),
+                x1,
                 y,
                 text=f"+ {hidden} autre{'s' if hidden > 1 else ''} pendule{'s' if hidden > 1 else ''} (Tab)",
                 anchor="nw",
-                fill=theme.FAINT,
+                fill=theme.HELPER,
                 font=fonts["label"],
                 tags=tags,
             )
@@ -973,30 +1021,19 @@ class DoublePendulumApp:
         text: str,
         font_name: str,
     ) -> None:
-        """Valeur modifiable : un champ discret, cliquable ou réglable à la molette."""
+        """Valeur modifiable : un champ souligné, cliquable ou réglable à la molette."""
 
         canvas, px = self.canvas, self.px
         tags = ("sidebar", f"field:{index}:{which}")
         x1, y1, x2, y2 = box
-        draw_rounded_rect(
-            canvas,
-            self.sprites,
-            x1,
-            y1,
-            x2,
-            y2,
-            px(6),
-            theme.SURFACE_RAISED,
-            theme.BORDER_STRONG,
-            max(1, round(px(1))),
-            tags=tags,
-        )
+        draw_box(canvas, x1, y1, x2, y2, theme.PAPER_DARK, tags=tags)
+        self._rule(x1, round(y2) - self.layout.line, x2, tags)
         canvas.create_text(
             x1 + px(8),
             (y1 + y2) / 2,
             text=text,
             anchor="w",
-            fill=theme.TEXT,
+            fill=theme.INK,
             font=self.fonts[font_name],
             tags=tags,
         )
@@ -1015,37 +1052,25 @@ class DoublePendulumApp:
         definition = self.definitions[index]
         chosen = index == self.selected and len(self.definitions) > 1
         tags = ("sidebar", f"card:{index}")
-        border = max(1, round(px(1)))
-        draw_rounded_rect(
-            canvas,
-            self.sprites,
-            x1,
-            y1,
-            x2,
-            y1 + height,
-            px(12),
-            theme.SURFACE,
-            blend(theme.ACCENT, theme.SURFACE, 0.7) if chosen else theme.BORDER,
-            border,
-            tags=tags,
-        )
+        draw_box(canvas, x1, y1, x2, y1 + height, theme.PAPER, tags=tags)
+        # Bandeau aux couleurs des deux masses, comme le haut des tuiles du portfolio.
+        band_bottom = round(y1 + px(CARD_BAND))
+        middle = round((x1 + x2) / 2)
+        draw_box(canvas, x1, y1, middle, band_bottom, definition.color1, tags=tags)
+        draw_box(canvas, middle, y1, x2, band_bottom, definition.color2, tags=tags)
+        if chosen:
+            draw_box(canvas, x1, y1, x2, y1 + height, None, theme.INK, round(px(2)), tags=tags)
+
         pad = px(12) if compact else px(16)
         title_height = fonts["card_title"].metrics("linespace")
-        center_y = y1 + pad + title_height / 2
-        dot_radius = px(5)
-        for position, color in enumerate((definition.color1, definition.color2)):
-            image = self.sprites.photo(
-                ("dot", color, round(dot_radius, 2)), lambda color=color: dot_png(color, dot_radius)
-            )
-            canvas.create_image(
-                x1 + pad + dot_radius + position * px(14), center_y, image=image, tags=tags
-            )
+        top = band_bottom + pad
+        center_y = top + title_height / 2
         canvas.create_text(
-            x1 + pad + px(34),
+            x1 + pad,
             center_y,
             text=definition.name,
             anchor="w",
-            fill=theme.TEXT,
+            fill=theme.INK,
             font=fonts["card_title"],
             tags=tags,
         )
@@ -1053,9 +1078,9 @@ class DoublePendulumApp:
             canvas.create_text(
                 x2 - pad,
                 center_y,
-                text="sélectionné",
+                text="SÉLECTIONNÉ",
                 anchor="e",
-                fill=theme.ACCENT,
+                fill=theme.HELPER,
                 font=fonts["axis"],
                 tags=tags,
             )
@@ -1074,24 +1099,22 @@ class DoublePendulumApp:
             cells = (("θ₁", angles[0]), ("θ₂", angles[1]), ("L₁", (0, length1)), ("L₂", (0, length2)))
             for position, (label, (which, value)) in enumerate(cells):
                 x = x1 + pad + (position % 2) * column_width
-                y = y1 + pad + title_height + px(4) + (position // 2) * line_height
+                y = top + title_height + px(4) + (position // 2) * line_height
                 center = y + line_height / 2
                 canvas.create_text(
-                    x, center, text=label, anchor="w", fill=theme.MUTED, font=font, tags=tags
+                    x, center, text=label, anchor="w", fill=theme.MUTED, font=fonts["label"], tags=tags
                 )
                 if which and self.setup:
                     box = (x + px(18), center - line_height / 2 + px(2), x + column_width - px(10), center + line_height / 2 - px(2))
                     self._draw_field(index, which, box, value, "compact")
                 else:
                     canvas.create_text(
-                        x + px(26), center, text=value, anchor="w", fill=theme.TEXT, font=font, tags=tags
+                        x + px(26), center, text=value, anchor="w", fill=theme.INK, font=font, tags=tags
                     )
             return
 
-        divider_y = y1 + pad + title_height + px(12)
-        canvas.create_line(
-            x1 + pad, divider_y, x2 - pad, divider_y, fill=theme.BORDER, width=border, tags=tags
-        )
+        divider_y = top + title_height + px(12)
+        self._rule(x1 + pad, divider_y, x2 - pad, tags)
         label_height = fonts["label"].metrics("linespace")
         field_height = self._field_height()
         row_height = label_height + px(4) + field_height + px(12)
@@ -1117,7 +1140,7 @@ class DoublePendulumApp:
                     field_top + field_height / 2,
                     text=value,
                     anchor="w",
-                    fill=theme.TEXT,
+                    fill=theme.INK,
                     font=fonts["value"],
                     tags=tags,
                 )
@@ -1138,29 +1161,18 @@ class DoublePendulumApp:
         definition = self.definitions[index]
         value = definition.theta1_degrees if which == 1 else definition.theta2_degrees
         px = self.px
-        line = max(1, round(px(1)))
-        # Le champ prend une bordure d'accent ; le texte saisi reste à sa place.
-        draw_rounded_rect(
-            self.canvas,
-            self.sprites,
-            x1,
-            y1,
-            x2,
-            y2,
-            px(6),
-            theme.SURFACE_RAISED,
-            theme.ACCENT,
-            line,
-            tags="editor",
-        )
+        line = round(px(2))
+        # Le champ prend le cadre rouge brique du focus du portfolio ; le texte
+        # saisi reste à sa place.
+        draw_box(self.canvas, x1, y1, x2, y2, theme.PAPER, theme.BRICK, line, tags="editor")
         entry = tk.Entry(
             self.canvas,
             font=self.fonts[font_name],
-            bg=theme.SURFACE_RAISED,
-            fg=theme.TEXT,
-            insertbackground=theme.TEXT,
-            selectbackground=blend(theme.ACCENT, theme.SURFACE_RAISED, 0.45),
-            selectforeground=theme.TEXT,
+            bg=theme.PAPER,
+            fg=theme.INK,
+            insertbackground=theme.INK,
+            selectbackground=blend(theme.TERRACOTTA, theme.PAPER, 0.4),
+            selectforeground=theme.INK,
             relief="flat",
             borderwidth=0,
             highlightthickness=0,
@@ -1210,7 +1222,7 @@ class DoublePendulumApp:
             return
         value = parse_angle(text)
         if value is None:
-            self._show_toast(f"Angle invalide : « {text.strip()} »", theme.RED)
+            self._show_toast(f"Angle invalide : « {text.strip()} »", theme.BRICK)
             return
         definition = self.definitions[index]
         theta1 = value if which == 1 else definition.theta1_degrees
@@ -1346,35 +1358,14 @@ class DoublePendulumApp:
     # ------------------------------------------------------------------
     # Indicateurs : état et notifications
 
-    def _pulse_frame(self, index: int) -> tk.PhotoImage:
-        px = self.px
-        return self.sprites.photo(
-            ("pulse", index, round(px(1), 3)),
-            lambda: pulse_png(theme.GREEN, px(3.6), px(9), index / PULSE_FRAMES),
-        )
+    def _square(
+        self, x: float, center_y: float, size: float, color: str, tags: str | tuple[str, ...]
+    ) -> int:
+        """Pastille carrée, comme les repères du parcours sur le portfolio."""
 
-    def _pill(
-        self,
-        x1: float,
-        center_y: float,
-        width: float,
-        height: float,
-        tags: str,
-        fill: str = theme.SURFACE,
-        border: str = theme.BORDER,
-    ) -> None:
-        draw_rounded_rect(
-            self.canvas,
-            self.sprites,
-            x1,
-            center_y - height / 2,
-            x1 + width,
-            center_y + height / 2,
-            height / 2,
-            fill,
-            border,
-            max(1, round(self.px(1))),
-            tags=tags,
+        left, top, side = round(x), round(center_y - size / 2), round(size)
+        return self.canvas.create_rectangle(
+            left, top, left + side, top + side, fill=color, outline="", width=0, tags=tags
         )
 
     def _draw_status(self) -> None:
@@ -1382,65 +1373,53 @@ class DoublePendulumApp:
             return
         canvas, layout, px, fonts = self.canvas, self.layout, self.px, self.fonts
         canvas.delete("status")
-        self._pulse_item = None
-        self._pulse_index = -1
+        self._blink_item = None
 
         center_y = self._header_center()
-        height = px(36)
-        pad = px(16)
-        state_width = max(
-            fonts["status"].measure(tracked(text)) for text in ("LECTURE", "PAUSE", "RÉGLAGE")
-        )
+        height = px(34)
+        pad = px(14)
+        square = px(10)
+        state_width = max(fonts["status"].measure(text) for text in ("LECTURE", "PAUSE", "RÉGLAGE"))
         clock_text = format_clock(self.pendulums[0].model.time)
         self._clock_length = len(clock_text)
         clock_width = fonts["clock"].measure(clock_text)
-        width = pad + px(12) + px(10) + state_width + px(28) + clock_width + pad
-        x1 = layout.width - layout.margin - width
+        divider = round(pad + square + px(10) + state_width + pad)
+        width = divider + layout.line + pad + clock_width + pad
+        x1 = round(layout.width - layout.margin - width)
+        top, bottom = center_y - height / 2, center_y + height / 2
         self._status_left = x1
-        self._pill(x1, center_y, width, height, "status")
+        draw_box(canvas, x1, top, x1 + width, bottom, theme.BACKGROUND, theme.INK, layout.line, tags="status")
+        draw_box(canvas, x1 + divider, top, x1 + divider + layout.line, bottom, theme.INK, tags="status")
 
-        icon_x = x1 + pad + px(6)
+        icon_x = x1 + pad
         if self.setup:
-            color, label = theme.ACCENT, "RÉGLAGE"
-            radius = px(3.6)
-            dot = self.sprites.photo(
-                ("dot", color, round(radius, 2)), lambda: dot_png(color, radius)
-            )
-            canvas.create_image(icon_x, center_y, image=dot, tags="status")
+            label = "RÉGLAGE"
+            self._square(icon_x, center_y, square, theme.SLATE, "status")
         elif self.paused:
-            color, label = theme.AMBER, "PAUSE"
-            for offset in (-px(2.5), px(2.5)):
+            label = "PAUSE"
+            bar = round(px(3.5))
+            for left in (icon_x + px(1), icon_x + square - px(1) - bar):
                 canvas.create_rectangle(
-                    round(icon_x + offset - px(1.2)),
-                    round(center_y - px(5)),
-                    round(icon_x + offset + px(1.2)),
-                    round(center_y + px(5)),
-                    fill=color,
+                    round(left),
+                    round(center_y - square / 2),
+                    round(left) + bar,
+                    round(center_y - square / 2) + round(square),
+                    fill=theme.TERRACOTTA,
                     outline="",
+                    width=0,
                     tags="status",
                 )
         else:
-            color, label = theme.GREEN, "LECTURE"
-            self._pulse_item = canvas.create_image(
-                icon_x, center_y, image=self._pulse_frame(0), tags="status"
-            )
+            label = "LECTURE"
+            self._blink_on = True
+            self._blink_item = self._square(icon_x, center_y, square, theme.SAGE, "status")
         canvas.create_text(
-            icon_x + px(16),
+            icon_x + square + px(10),
             center_y,
-            text=tracked(label),
+            text=label,
             anchor="w",
-            fill=color,
+            fill=theme.INK,
             font=fonts["status"],
-            tags="status",
-        )
-        separator_x = icon_x + px(16) + state_width + px(14)
-        canvas.create_line(
-            separator_x,
-            center_y - px(9),
-            separator_x,
-            center_y + px(9),
-            fill=theme.BORDER_STRONG,
-            width=max(1, round(px(1))),
             tags="status",
         )
         self._time_item = canvas.create_text(
@@ -1448,7 +1427,7 @@ class DoublePendulumApp:
             center_y,
             text=clock_text,
             anchor="e",
-            fill=theme.TEXT,
+            fill=theme.INK,
             font=fonts["clock"],
             tags="status",
         )
@@ -1469,26 +1448,31 @@ class DoublePendulumApp:
         message, color, _ = self._toast
         font = self.fonts["tag"]
         height = px(34)
-        width = px(16) + px(8) + px(10) + font.measure(message) + px(18)
+        square = px(8)
+        width = px(14) + square + px(10) + font.measure(message) + px(16)
         center_x = (self._title_right + self._status_left) / 2
         if self._status_left - self._title_right < width + px(24):
             center_x = layout.width / 2
         x1 = center_x - width / 2
         center_y = self._header_center()
-        self._pill(
-            x1, center_y, width, height, "toast", theme.SURFACE_RAISED, theme.BORDER_STRONG
+        draw_box(
+            canvas,
+            x1,
+            center_y - height / 2,
+            x1 + width,
+            center_y + height / 2,
+            theme.PAPER,
+            theme.INK,
+            layout.line,
+            tags="toast",
         )
-        dot_radius = px(3.5)
-        dot = self.sprites.photo(
-            ("dot", color, round(dot_radius, 2)), lambda: dot_png(color, dot_radius)
-        )
-        canvas.create_image(x1 + px(16) + dot_radius, center_y, image=dot, tags="toast")
+        self._square(x1 + px(14), center_y, square, color, "toast")
         canvas.create_text(
-            x1 + px(16) + px(8) + px(10),
+            x1 + px(14) + square + px(10),
             center_y,
             text=message,
             anchor="w",
-            fill=theme.TEXT,
+            fill=theme.INK,
             font=font,
             tags="toast",
         )
@@ -1499,45 +1483,27 @@ class DoublePendulumApp:
     def _draw_keycap(
         self, x: float, center_y: float, key: str, tags: str, accent: str | None = None
     ) -> float:
+        """Touche cadrée d'encre ; ``accent`` la remplit (encre : action principale)."""
+
         px, font = self.px, self.fonts["key"]
-        width = max(px(26), font.measure(key) + px(16))
-        height = px(24)
-        top = center_y - height / 2 - px(1)
-        face, border = theme.SURFACE_RAISED, theme.BORDER_STRONG
-        if accent is not None:
-            face = blend(accent, theme.SURFACE_RAISED, 0.2)
-            border = blend(accent, theme.SURFACE_RAISED, 0.6)
-        radius = px(6)
-        # Liseré sombre décalé vers le bas : effet de touche en relief.
-        draw_rounded_rect(
+        width = max(px(24), font.measure(key) + px(14))
+        height = px(22)
+        draw_box(
             self.canvas,
-            self.sprites,
             x,
-            top + px(2),
+            center_y - height / 2,
             x + width,
-            top + height + px(2),
-            radius,
-            theme.KEY_EDGE,
-            tags=tags,
-        )
-        draw_rounded_rect(
-            self.canvas,
-            self.sprites,
-            x,
-            top,
-            x + width,
-            top + height,
-            radius,
-            face,
-            border,
-            max(1, round(px(1))),
+            center_y + height / 2,
+            accent or theme.PAPER,
+            theme.INK,
+            self.layout.line,
             tags=tags,
         )
         self.canvas.create_text(
             x + width / 2,
-            top + height / 2,
+            center_y,
             text=key,
-            fill=theme.TEXT if accent is None else blend(accent, theme.TEXT, 0.5),
+            fill=theme.PAPER if accent == theme.INK else theme.INK,
             font=font,
             tags=tags,
         )
@@ -1545,16 +1511,16 @@ class DoublePendulumApp:
 
     def _command_list(self) -> list[tuple[str, str, str | None]]:
         if self.setup:
-            commands = [("ESPACE", "lancer", theme.ACCENT), ("← → ↑ ↓", "angles", None)]
+            commands = [("ESPACE", "lancer", theme.INK), ("← → ↑ ↓", "angles", None)]
             if len(self.definitions) > 1:
                 commands.append(("TAB", "pendule suivant", None))
             return commands + [("R", "angles du code", None), ("ÉCHAP", "quitter", None)]
         return [
             ("ESPACE", "lecture" if self.paused else "pause", None),
             ("R", "réglages", None),
-            ("T", "traînées", theme.GREEN if self.trails_visible else None),
+            ("T", "traînées", theme.SAGE if self.trails_visible else None),
             ("H", "masquer l'aide", None),
-            ("F", "plein écran", theme.GREEN if self.fullscreen else None),
+            ("F", "plein écran", theme.SAGE if self.fullscreen else None),
             ("ÉCHAP", "quitter", None),
         ]
 
@@ -1563,8 +1529,10 @@ class DoublePendulumApp:
             return
         canvas, layout, px, fonts = self.canvas, self.layout, self.px, self.fonts
         canvas.delete("commands")
-        bar_height = px(46)
-        center_y = layout.command_top + bar_height / 2
+        # Filet d'encre sur toute la largeur, comme au-dessus du pied de page du portfolio.
+        top = round(layout.command_top)
+        self._rule(layout.margin, top, layout.width - layout.margin, "commands")
+        center_y = (top + layout.line + layout.band_top) / 2
 
         if not self.commands_visible:
             right = self._draw_keycap(layout.margin, center_y, "H", "commands")
@@ -1573,7 +1541,7 @@ class DoublePendulumApp:
                 center_y,
                 text="afficher l'aide",
                 anchor="w",
-                fill=theme.FAINT,
+                fill=theme.HELPER,
                 font=fonts["hint"],
                 tags="commands",
             )
@@ -1581,24 +1549,21 @@ class DoublePendulumApp:
 
         commands = self._command_list()
         key_font, hint_font = fonts["key"], fonts["hint"]
-        pad, label_gap = px(14), px(9)
+        label_gap = px(9)
         available = layout.width - 2 * layout.margin
 
         def total_width(item_gap: float) -> float:
             widths = [
-                max(px(26), key_font.measure(key) + px(16)) + label_gap + hint_font.measure(label)
+                max(px(24), key_font.measure(key) + px(14)) + label_gap + hint_font.measure(label)
                 for key, label, _ in commands
             ]
-            return 2 * pad + sum(widths) + item_gap * (len(widths) - 1)
+            return sum(widths) + item_gap * (len(widths) - 1)
 
-        item_gap = px(24)
+        item_gap = px(28)
         if total_width(item_gap) > available:
             item_gap = px(12)
-        width = min(total_width(item_gap), available)
-        x1 = (layout.width - width) / 2
-        self._pill(x1, center_y, width, bar_height, "commands")
 
-        x = x1 + pad
+        x = layout.margin
         for key, label, accent in commands:
             x = self._draw_keycap(x, center_y, key, "commands", accent)
             canvas.create_text(
@@ -1606,7 +1571,7 @@ class DoublePendulumApp:
                 center_y,
                 text=label,
                 anchor="w",
-                fill=theme.MUTED if accent is None else blend(accent, theme.MUTED, 0.55),
+                fill=theme.MUTED if accent is None else theme.INK,
                 font=hint_font,
                 tags="commands",
             )
@@ -1633,14 +1598,8 @@ class DoublePendulumApp:
         for index, (pendulum, items) in enumerate(zip(self.pendulums, self.items)):
             self._update_trail(pendulum, items)
             sx1, sy1, sx2, sy2 = self._mass_positions(index)
-            for shadow, rod, start, end in zip(
-                items.rod_shadows,
-                items.rods,
-                ((ox, oy), (sx1, sy1)),
-                ((sx1, sy1), (sx2, sy2)),
-            ):
-                canvas.coords(shadow, *start, *end)
-                canvas.coords(rod, *start, *end)
+            canvas.coords(items.rods[0], ox, oy, sx1, sy1)
+            canvas.coords(items.rods[1], sx1, sy1, sx2, sy2)
             canvas.coords(items.masses[0], sx1, sy1)
             canvas.coords(items.masses[1], sx2, sy2)
 
@@ -1686,10 +1645,9 @@ class DoublePendulumApp:
         definition = self.definitions[self.selected]
         ox, oy = self.layout.origin
         sx1, sy1, _, _ = self._mass_positions(self.selected)
-        width = max(1, round(px(2)))
+        width = self.layout.line
         line = max(1, round(px(1)))
-        guide = blend(theme.ACCENT, theme.BACKGROUND, 0.35)
-        canvas.create_line(sx1, sy1, sx1, sy1 + px(56), fill=guide, width=line, tags="overlay")
+        canvas.create_line(sx1, sy1, sx1, sy1 + px(56), fill=theme.HELPER, width=line, tags="overlay")
         for (cx, cy), radius, angle, name in (
             ((ox, oy), px(52), definition.theta1_degrees, "θ₁"),
             ((sx1, sy1), px(40), definition.theta2_degrees, "θ₂"),
@@ -1703,18 +1661,15 @@ class DoublePendulumApp:
                     start=270,
                     extent=angle if abs(angle) < 360 else 359.9,
                     style="arc",
-                    outline=theme.ACCENT,
+                    outline=theme.INK,
                     width=width,
                     tags="overlay",
                 )
             text = f"{name} {format_value(angle, '°')}"
-            font = self.fonts["tag"]
-            label_width = round(font.measure(text) + px(14))
+            font = self.fonts["mark"]
+            label_width = round(font.measure(text) + px(12))
             label_height = round(font.metrics("linespace") + px(4))
-            back = self.sprites.photo(
-                ("capsule", label_width, label_height),
-                lambda: capsule_png(label_width, label_height, theme.BACKGROUND, 0.72),
-            )
+            back = self.veil(label_width, label_height, 0.85)
             if abs(angle) < 35:
                 # Angle étroit : l'étiquette se range du côté opposé à la tige.
                 side = -1 if angle >= 0 else 1
@@ -1725,7 +1680,7 @@ class DoublePendulumApp:
                 lx = cx + math.sin(middle) * (radius + px(24))
                 ly = cy + math.cos(middle) * (radius + px(24))
             canvas.create_image(lx, ly, image=back, tags="overlay")
-            canvas.create_text(lx, ly, text=text, fill=theme.ACCENT, font=font, tags="overlay")
+            canvas.create_text(lx, ly, text=text, fill=theme.INK, font=font, tags="overlay")
         self._overlay_drawn = True
 
     def _update_trail(self, pendulum: ActivePendulum, items: PendulumItems) -> None:

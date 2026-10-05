@@ -117,11 +117,12 @@ class MapServiceTests(unittest.TestCase):
 
 class DisplayTests(unittest.TestCase):
     def test_ramp_gets_lighter(self):
-        ramp = sequential_ramp(hue=255, chroma=0.15).astype(float)
-        luminance = ramp @ np.array([0.2126, 0.7152, 0.0722])
+        ramp = sequential_ramp("#1b1b1b", "#44738c", "#f3efe7")
+        luminance = ramp.astype(float) @ np.array([0.2126, 0.7152, 0.0722])
         self.assertTrue(np.all(np.diff(luminance) >= -1))
-        self.assertLess(luminance[0], 40)
-        self.assertGreater(luminance[-1], 220)
+        # Les extrémités sont exactement l'encre et le papier.
+        self.assertEqual(tuple(ramp[0]), (0x1B, 0x1B, 0x1B))
+        self.assertEqual(tuple(ramp[-1]), (0xF3, 0xEF, 0xE7))
 
     def test_periodicity_scale(self):
         values = np.array([np.inf, PERIODIC_WORST, PERIODIC_BEST, 0.0, np.nan])
